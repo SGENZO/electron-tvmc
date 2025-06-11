@@ -20,11 +20,11 @@ import json
 # -
 
 # back
-N = 30
-EXACT = True # which model to take
+N = 30 # number of particles
+EXACT = True # which model to take # True for exact, False for approximate? 不明白这里的 exact 的含义
 
-Gint = 1.0
-hi = nk.hilbert.Particle(N=N, D=1, pbc=False)
+Gint = 1.0 # harmonic interaction strength
+hi = nk.hilbert.Particle(N=N, D=1, pbc=False) # particle in 1D without pbc
 
 from src.sampler import MetropolisGaussAdaptive
 sampler = MetropolisGaussAdaptive(
@@ -65,24 +65,28 @@ effective_alpha = jnp.sqrt(1 + N * Gint)
 
 @jax.jit
 def _compute_log_gs(x, alpha, beta, phase=0):
-    # use 1d (forget dimension)
+    # 维度处理：将输入坐标重塑为 (样本数, 粒子数)
     x = x.reshape(-1, N)
-    idx = jnp.triu_indices(N, k=1)
-    dis = -x[:, None, :] + x[:, :, None]
-    xij = dis[:, idx[0], idx[1]]
+    
+    # 1. 计算所有粒子对的位置差（反对称项）
+    idx = jnp.triu_indices(N, k=1)  # 获取i<j的上三角索引
+    dis = -x[:, None, :] + x[:, :, None]  # 计算所有粒子对差 (batch, i, j)
+    xij = dis[:, idx[0], idx[1]]  # 提取唯一粒子对 (batch, pair)
+    
+    # 反对称项：log(prod_{i<j} (x_i - x_j))
+    log_xij = jnp.log(xij + 0j)  # 复数对数处理
+    log_det = jnp.sum(log_xij, axis=-1)  # 沿粒子对维度求和
 
-    log_xij = jnp.log(xij + 0j)
-    log_det = jnp.sum(log_xij, axis=-1)  # product over pairs
+    # 2. 单粒子谐振势项
+    r2 = x**2  # 各粒子坐标平方
+    J = alpha * r2.sum(axis=-1) / 2  # α∑x_i²/2
 
-    r2 = x**2
-    J = alpha * r2
-    J = J.sum(axis=-1) / 2  # sum particles (product)
+    # 3. 集体运动项
+    R2 = x.sum(axis=-1)**2  # 总坐标和的平方
+    K = beta * R2 / 2  # β(∑x_i)^2/2
 
-    R2 = x.sum(axis=-1) ** 2
-    K = beta * R2 / 2
-
+    # 合成波函数（对数形式）
     log_psi = log_det - J - K - 1j * phase
-
     return log_psi
 
 
